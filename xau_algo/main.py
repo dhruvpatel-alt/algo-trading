@@ -27,8 +27,8 @@ from datetime import datetime, timezone
 
 import pytz
 
-# Ensure xau_algo package is importable when running from project root
-sys.path.insert(0, os.path.dirname(__file__))
+# Ensure xau_algo package is importable when running from inside the directory
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from xau_algo import config
 from xau_algo.data.candle_builder import CandleBuilder
