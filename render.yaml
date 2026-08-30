@@ -1,0 +1,38 @@
+services:
+  # ---------------------------------------------------------
+  # 1. Chart API Service
+  # ---------------------------------------------------------
+  - type: web
+    name: xau-chart-api
+    env: python
+    region: ohio # Change as appropriate
+    buildCommand: "pip install -r xau_algo/requirements.txt"
+    startCommand: "cd xau_algo && python main.py --mode api"
+    envVars:
+      - key: SUPABASE_DB_URL
+        sync: false
+      - key: SUPABASE_DB_KEY
+        sync: false
+      - key: SUPABASE_DB_DIRECT_URL
+        sync: false
+      - key: HEALTH_API_PORT
+        value: "8000"
+
+  # ---------------------------------------------------------
+  # 2. Trading Engine Worker (Optional if deployed together)
+  # ---------------------------------------------------------
+  - type: worker
+    name: xau-trading-engine
+    env: python
+    region: ohio # Change as appropriate
+    buildCommand: "pip install -r xau_algo/requirements.txt"
+    startCommand: "cd xau_algo && python main.py --mode paper"
+    envVars:
+      - key: TWELVE_DATA_API_KEY_1
+        sync: false
+      - key: SUPABASE_DB_URL
+        sync: false
+      - key: SUPABASE_DB_KEY
+        sync: false
+      - key: SUPABASE_DB_DIRECT_URL
+        sync: false

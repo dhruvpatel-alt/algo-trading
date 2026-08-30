@@ -1,0 +1,23 @@
+[Unit]
+Description=XAU/USD Paper Trading Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/AlgoTrading/xau_algo
+EnvironmentFile=/home/ubuntu/AlgoTrading/xau_algo/.env
+ExecStart=/home/ubuntu/AlgoTrading/venv/bin/python /home/ubuntu/AlgoTrading/xau_algo/main.py --mode paper
+
+# Restart automatically on crash / unexpected exit with a 10s delay
+Restart=always
+RestartSec=10
+
+# Logging to journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=trading-bot
+
+[Install]
+WantedBy=multi-user.target
