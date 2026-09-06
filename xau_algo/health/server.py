@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING
 
 import uvicorn
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from xau_algo import config
@@ -51,6 +52,14 @@ def _build_app(health_state: "HealthState") -> FastAPI:
         version="1.0.0",
         docs_url=None,   # disable Swagger UI in production
         redoc_url=None,
+    )
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
     )
 
     @app.get("/health/live", tags=["health"])
