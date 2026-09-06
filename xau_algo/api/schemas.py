@@ -67,6 +67,32 @@ class ChartResponse(BaseModel):
     trades: List[TradeData]
 
 # ---------------------------------------------------------
+# Strategy & Performance Models
+# ---------------------------------------------------------
+
+class StrategyInfo(BaseModel):
+    id: str
+    name: str
+    description: Optional[str] = None
+    color: Optional[str] = None
+
+class StrategyPerformance(BaseModel):
+    strategy_id: str
+    total_trades: int = 0
+    winning_trades: int = 0
+    losing_trades: int = 0
+    win_rate: float = 0.0
+    total_pnl: float = 0.0
+    gross_profit: float = 0.0
+    gross_loss: float = 0.0
+    profit_factor: float = 0.0
+    open_positions: int = 0
+
+class StrategyPerformanceResponse(BaseModel):
+    timestamp: datetime
+    strategies: List[StrategyPerformance]
+
+# ---------------------------------------------------------
 # WebSocket Event Models
 # ---------------------------------------------------------
 
