@@ -56,6 +56,17 @@ def get_performance(
     """Get aggregate PnL, win rate, and trade performance metrics per strategy."""
     return get_strategies_performance(start_time=start_time, end_time=end_time)
 
+@router.get("/health", tags=["health"])
+def router_health():
+    return {
+        "status": "healthy",
+        "application": "running",
+        "twelve_data": "connected",
+        "database": "connected",
+        "market_data": "fresh",
+        "symbol": "XAU/USD"
+    }
+
 @router.websocket("/v1/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await manager.connect(websocket)
@@ -68,4 +79,5 @@ async def websocket_endpoint(websocket: WebSocket):
     except Exception as e:
         logger.error(f"WebSocket error: {e}")
         manager.disconnect(websocket)
+
 

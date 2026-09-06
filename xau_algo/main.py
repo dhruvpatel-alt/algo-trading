@@ -317,7 +317,7 @@ def main() -> None:
         run_backtest(days=args.days)
     elif args.mode == "api":
         from xau_algo.api.server import run_api_server
-        run_api_server(port=config.HEALTH_API_PORT + 1 if hasattr(config, 'HEALTH_API_PORT') else 8000)
+        run_api_server(port=8000)
 
 
 if __name__ == "__main__":

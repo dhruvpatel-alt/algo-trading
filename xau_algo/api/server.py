@@ -9,6 +9,59 @@ from xau_algo.api.event_listener import listen_to_db_events
 
 logger = logging.getLogger(__name__)
 
+from datetime import datetime, timezone
+
+_SERVER_START_TIME = datetime.now(timezone.utc)
+
+def get_live_health_snapshot():
+    now = datetime.now(timezone.utc)
+    uptime = int((now - _SERVER_START_TIME).total_seconds())
+    
+    db_status = "disconnected"
+    market_data = "no_data"
+    td_status = "disconnected"
+    last_tick_seconds_ago = None
+    
+    try:
+        from xau_algo.api.chart_service import _get_db_connection
+        with _get_db_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT max(timestamp) FROM candles WHERE symbol = %s", (config.SYMBOL,))
+                row = cur.fetchone()
+                db_status = "connected"
+                
+                if row and row[0]:
+                    last_ts = row[0]
+                    if last_ts.tzinfo is None:
+                        last_ts = last_ts.replace(tzinfo=timezone.utc)
+                    last_tick_seconds_ago = max(0, int((now - last_ts).total_seconds()))
+                    max_stale = getattr(config, 'MAX_TICK_STALENESS_SECONDS', 120)
+                    if last_tick_seconds_ago <= max_stale:
+                        market_data = "fresh"
+                        td_status = "connected"
+                    else:
+                        market_data = "stale"
+                        td_status = "stale"
+                else:
+                    td_status = "connected"
+                    market_data = "fresh"
+    except Exception as e:
+        logger.warning(f"Health DB probe error: {e}")
+        db_status = "disconnected"
+
+    is_healthy = (db_status == "connected")
+    
+    return {
+        "status": "healthy" if is_healthy else "unhealthy",
+        "application": "running",
+        "twelve_data": td_status,
+        "database": db_status,
+        "market_data": market_data,
+        "symbol": config.SYMBOL,
+        "last_tick_seconds_ago": last_tick_seconds_ago,
+        "uptime_seconds": uptime
+    }
+
 def create_app() -> FastAPI:
     app = FastAPI(
         title="XAU/USD Chart API",
@@ -26,6 +79,20 @@ def create_app() -> FastAPI:
     )
 
     app.include_router(chart_router, prefix="/api")
+
+    @app.get("/health/live", tags=["health"])
+    def liveness():
+        return {"status": "alive", "application": "running"}
+
+    @app.get("/health/ready", tags=["health"])
+    def readiness():
+        snapshot = get_live_health_snapshot()
+        return {"ready": snapshot["status"] == "healthy", "twelve_data": snapshot["twelve_data"], "database": snapshot["database"]}
+
+    @app.get("/health", tags=["health"])
+    @app.get("/api/health", tags=["health"])
+    def health():
+        return get_live_health_snapshot()
 
     @app.on_event("startup")
     async def startup_event():
