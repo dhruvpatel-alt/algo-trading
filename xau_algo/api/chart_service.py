@@ -21,6 +21,16 @@ def _get_db_connection():
     conn = psycopg2.connect(direct_url)
     return conn
 
+def _get_symbol_variants(symbol: str) -> List[str]:
+    clean = (symbol or "").strip()
+    variants = [clean]
+    if clean.upper() in ("XAUUSD", "XAU_USD", "GOLD"):
+        variants.append("XAU/USD")
+    elif clean == "XAU/USD":
+        variants.append("XAUUSD")
+    variants.extend([v.upper() for v in variants])
+    return list(dict.fromkeys(variants))
+
 def get_chart_data(
     symbol: str,
     timeframe: str,
@@ -40,27 +50,42 @@ def get_chart_data(
     if strategy_id:
         strategy_list = [s.strip() for s in strategy_id.split(",") if s.strip()]
     
+    sym_variants = _get_symbol_variants(symbol)
+
     with _get_db_connection() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             # 1. Fetch Candles
             cur.execute("""
                 SELECT * FROM candles 
-                WHERE symbol = %s AND timestamp < %s 
+                WHERE symbol = ANY(%s) AND timestamp < %s 
                 ORDER BY timestamp DESC 
                 LIMIT 100
-            """, (symbol, start_time))
+            """, (sym_variants, start_time))
             warmup_rows = cur.fetchall()
             warmup_rows.reverse() # chronological
             
             # Fetch the main requested candles
             cur.execute("""
                 SELECT * FROM candles 
-                WHERE symbol = %s AND timestamp >= %s AND timestamp <= %s 
+                WHERE symbol = ANY(%s) AND timestamp >= %s AND timestamp <= %s 
                 ORDER BY timestamp ASC 
                 LIMIT %s
-            """, (symbol, start_time, end_time, limit))
+            """, (sym_variants, start_time, end_time, limit))
             main_rows = cur.fetchall()
             
+            # Fallback: if main range returned no candles, fetch latest candles from DB
+            if not main_rows:
+                cur.execute("""
+                    SELECT * FROM candles 
+                    WHERE symbol = ANY(%s)
+                    ORDER BY timestamp DESC 
+                    LIMIT %s
+                """, (sym_variants, limit))
+                main_rows = cur.fetchall()
+                main_rows.reverse()
+                if main_rows:
+                    start_time = main_rows[0]['timestamp']
+
             all_rows = warmup_rows + main_rows
             
             # Extract closes

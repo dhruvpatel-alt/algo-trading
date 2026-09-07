@@ -191,8 +191,8 @@ class TestSupabaseRepositoryEnabled:
         repo = self._make_repo(mock_client)
         with patch("psycopg2.connect", return_value=mock_conn):
             repo.ensure_tables()
-        # Five DDL statements (4 tables + 1 view)
-        assert mock_cur.execute.call_count == 5
+        # Six DDL statements (4 tables + 1 view + 1 triggers)
+        assert mock_cur.execute.call_count == 6
         repo.close(timeout=2)
 
     def test_save_candle_upserts(self):
