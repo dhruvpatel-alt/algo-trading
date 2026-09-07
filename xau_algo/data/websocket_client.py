@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import logging
+import ssl
 import threading
 import time
 from datetime import datetime, timezone
@@ -101,9 +102,6 @@ class TwelveDataWebSocketClient:
         logger.info("TWELVE_DATA_DISCONNECTED | WebSocket client stopped.")
 
     # ------------------------------------------------------------------
-    # Internal
-    # ------------------------------------------------------------------
-
     def _connect(self) -> None:
         url = f"{config.TWELVE_DATA_WS_URL}?apikey={self._current_key}"
 
@@ -117,7 +115,11 @@ class TwelveDataWebSocketClient:
 
         self._thread = threading.Thread(
             target=self._ws.run_forever,
-            kwargs={"ping_interval": 30, "ping_timeout": 10},
+            kwargs={
+                "ping_interval": 15,
+                "ping_timeout": 10,
+                "sslopt": {"cert_reqs": ssl.CERT_NONE},
+            },
             daemon=True,
         )
         self._thread.start()

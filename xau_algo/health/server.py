@@ -160,6 +160,13 @@ class HealthServer:
         self._server: uvicorn.Server | None = None
         self._thread: threading.Thread | None = None
 
+    def _run_server_safe(self) -> None:
+        try:
+            if self._server:
+                self._server.run()
+        except Exception as exc:
+            logger.warning("Health API server thread stopped: %s", exc)
+
     def start(self) -> None:
         """Start the HTTP server in a background daemon thread."""
         uvicorn_config = uvicorn.Config(
@@ -172,7 +179,7 @@ class HealthServer:
         self._server = uvicorn.Server(uvicorn_config)
 
         self._thread = threading.Thread(
-            target=self._server.run,
+            target=self._run_server_safe,
             name="health-server",
             daemon=True,
         )
