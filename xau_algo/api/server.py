@@ -23,10 +23,10 @@ def get_live_health_snapshot():
     last_tick_seconds_ago = None
     
     try:
-        from xau_algo.api.chart_service import _get_db_connection
+        from xau_algo.api.chart_service import _get_db_connection, _get_symbol_variants
         with _get_db_connection() as conn:
             with conn.cursor() as cur:
-                cur.execute("SELECT max(timestamp) FROM candles WHERE symbol = %s", (config.SYMBOL,))
+                cur.execute("SELECT max(timestamp) FROM candles WHERE symbol = ANY(%s)", (_get_symbol_variants(config.SYMBOL),))
                 row = cur.fetchone()
                 db_status = "connected"
                 

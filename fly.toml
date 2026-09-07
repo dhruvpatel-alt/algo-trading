@@ -1,0 +1,15 @@
+# fly.toml app configuration file generated for xau-trading-engine
+
+app = "xau-trading-engine"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  # Environment variables will be injected via fly secrets, but non-secrets can go here.
+  # Do not put API keys or Database passwords here.
+  # Set them later using: fly secrets set TWELVE_DATA_API_KEY_1=... SUPABASE_DB_URL=...
+  
+# Since this is a pure background worker, we don't define any [http_service] sections.
+# Fly.io will run this container and keep it alive in the background.

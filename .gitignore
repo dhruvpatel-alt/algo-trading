@@ -1,0 +1,16 @@
+# Nested Repositories
+golden-compass/
+
+# Secrets & Keys
+*.pem
+*.pem - Shortcut.lnk
+.env
+.env.*
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+venv/
+logs/
+*.log
