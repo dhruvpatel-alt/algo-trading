@@ -31,6 +31,59 @@ def _get_symbol_variants(symbol: str) -> List[str]:
     variants.extend([v.upper() for v in variants])
     return list(dict.fromkeys(variants))
 
+def _get_chart_data_rest_fallback(
+    symbol: str,
+    timeframe: str,
+    start_time: datetime,
+    end_time: datetime,
+    include_indicators: bool = True,
+    limit: int = 1000
+) -> ChartResponse:
+    candles = []
+    indicators = []
+    try:
+        if config.SUPABASE_DB_URL and config.SUPABASE_DB_KEY:
+            from supabase import create_client
+            client = create_client(config.SUPABASE_DB_URL, config.SUPABASE_DB_KEY)
+            res = client.table("candles").select("*").order("timestamp", desc=True).limit(limit).execute()
+            raw_candles = res.data or []
+            raw_candles.reverse()
+            
+            closes = [float(row['close']) for row in raw_candles]
+            ema20_list = calculate_ema(closes, config.EMA20_PERIOD) if include_indicators else [None]*len(raw_candles)
+            ema50_list = calculate_ema(closes, config.EMA50_PERIOD) if include_indicators else [None]*len(raw_candles)
+            
+            for i, row in enumerate(raw_candles):
+                ts_val = row['timestamp']
+                ts = datetime.fromisoformat(ts_val.replace("Z", "+00:00")) if isinstance(ts_val, str) else ts_val
+                candles.append(CandleData(
+                    timestamp=ts,
+                    open=float(row['open']),
+                    high=float(row['high']),
+                    low=float(row['low']),
+                    close=float(row['close']),
+                    volume=0.0,
+                    is_complete=True
+                ))
+                if include_indicators:
+                    indicators.append(IndicatorData(
+                        timestamp=ts,
+                        ema20=ema20_list[i],
+                        ema50=ema50_list[i]
+                    ))
+    except Exception as exc:
+        logger.error(f"Supabase REST chart query failed: {exc}")
+
+    return ChartResponse(
+        instrument=InstrumentInfo(id=symbol, symbol=symbol, display_name=f"{symbol} Instrument"),
+        timeframe=timeframe,
+        range=RangeInfo(start=start_time, end=end_time),
+        candles=candles,
+        indicators=indicators,
+        signals=[],
+        trades=[]
+    )
+
 def get_chart_data(
     symbol: str,
     timeframe: str,
@@ -52,135 +105,159 @@ def get_chart_data(
     
     sym_variants = _get_symbol_variants(symbol)
 
-    with _get_db_connection() as conn:
-        with conn.cursor(cursor_factory=RealDictCursor) as cur:
-            # 1. Fetch Candles
-            cur.execute("""
-                SELECT * FROM candles 
-                WHERE symbol = ANY(%s) AND timestamp < %s 
-                ORDER BY timestamp DESC 
-                LIMIT 100
-            """, (sym_variants, start_time))
-            warmup_rows = cur.fetchall()
-            warmup_rows.reverse() # chronological
-            
-            # Fetch the main requested candles
-            cur.execute("""
-                SELECT * FROM candles 
-                WHERE symbol = ANY(%s) AND timestamp >= %s AND timestamp <= %s 
-                ORDER BY timestamp ASC 
-                LIMIT %s
-            """, (sym_variants, start_time, end_time, limit))
-            main_rows = cur.fetchall()
-            
-            # Fallback: if main range returned no candles, fetch latest candles from DB
-            if not main_rows:
+    try:
+        conn = _get_db_connection()
+    except Exception as db_err:
+        logger.warning(f"Direct DB connection failed in get_chart_data: {db_err}. Trying REST API fallback.")
+        return _get_chart_data_rest_fallback(
+            symbol=symbol,
+            timeframe=timeframe,
+            start_time=start_time,
+            end_time=end_time,
+            include_indicators=include_indicators,
+            limit=limit
+        )
+
+    try:
+        with conn:
+            with conn.cursor(cursor_factory=RealDictCursor) as cur:
+                # 1. Fetch Candles
                 cur.execute("""
                     SELECT * FROM candles 
-                    WHERE symbol = ANY(%s)
+                    WHERE symbol = ANY(%s) AND timestamp < %s 
                     ORDER BY timestamp DESC 
-                    LIMIT %s
-                """, (sym_variants, limit))
-                main_rows = cur.fetchall()
-                main_rows.reverse()
-                if main_rows:
-                    start_time = main_rows[0]['timestamp']
-
-            all_rows = warmup_rows + main_rows
-            
-            # Extract closes
-            closes = [float(row['close']) for row in all_rows]
-            
-            # Compute EMA
-            if include_indicators:
-                ema20_list = calculate_ema(closes, config.EMA20_PERIOD)
-                ema50_list = calculate_ema(closes, config.EMA50_PERIOD)
-            else:
-                ema20_list = [None] * len(all_rows)
-                ema50_list = [None] * len(all_rows)
-            
-            candles = []
-            indicators = []
-            
-            # Filter the main rows
-            for i, row in enumerate(all_rows):
-                if row['timestamp'] >= start_time:
-                    c = CandleData(
-                        timestamp=row['timestamp'],
-                        open=float(row['open']),
-                        high=float(row['high']),
-                        low=float(row['low']),
-                        close=float(row['close']),
-                        volume=0.0,
-                        is_complete=True
-                    )
-                    candles.append(c)
-                    
-                    if include_indicators:
-                        ind = IndicatorData(
-                            timestamp=row['timestamp'],
-                            ema20=ema20_list[i],
-                            ema50=ema50_list[i]
-                        )
-                        indicators.append(ind)
-                        
-            # 2. Fetch Signals
-            signals = []
-            if include_signals:
-                sig_query = "SELECT * FROM signals WHERE signal_time >= %s AND signal_time <= %s"
-                sig_params: List[Any] = [start_time, end_time]
-                if strategy_list:
-                    sig_query += " AND strategy = ANY(%s)"
-                    sig_params.append(strategy_list)
-                sig_query += " ORDER BY signal_time ASC LIMIT %s"
-                sig_params.append(limit)
+                    LIMIT 100
+                """, (sym_variants, start_time))
+                warmup_rows = cur.fetchall()
+                warmup_rows.reverse() # chronological
                 
-                cur.execute(sig_query, tuple(sig_params))
-                sig_rows = cur.fetchall()
-                for row in sig_rows:
-                    signals.append(SignalData(
-                        id=str(row['id']),
-                        strategy_id=row['strategy'],
-                        type=row['direction'],
-                        timestamp=row['signal_time'],
-                        price=float(row['entry_price']) if row['entry_price'] else None,
-                        status="TRIGGERED"
-                    ))
-                    
-            # 3. Fetch Trades
-            trades = []
-            if include_trades:
-                trade_query = "SELECT * FROM trades WHERE entry_time <= %s AND (exit_time IS NULL OR exit_time >= %s)"
-                trade_params: List[Any] = [end_time, start_time]
-                if strategy_list:
-                    trade_query += " AND strategy = ANY(%s)"
-                    trade_params.append(strategy_list)
-                if side:
-                    trade_query += " AND side = %s"
-                    trade_params.append(side.upper())
-                if trade_status:
-                    trade_query += " AND status = %s"
-                    trade_params.append(trade_status.upper())
-                trade_query += " ORDER BY entry_time ASC LIMIT %s"
-                trade_params.append(limit)
+                # Fetch the main requested candles
+                cur.execute("""
+                    SELECT * FROM candles 
+                    WHERE symbol = ANY(%s) AND timestamp >= %s AND timestamp <= %s 
+                    ORDER BY timestamp ASC 
+                    LIMIT %s
+                """, (sym_variants, start_time, end_time, limit))
+                main_rows = cur.fetchall()
+                
+                # Fallback: if main range returned no candles, fetch latest candles from DB
+                if not main_rows:
+                    cur.execute("""
+                        SELECT * FROM candles 
+                        WHERE symbol = ANY(%s)
+                        ORDER BY timestamp DESC 
+                        LIMIT %s
+                    """, (sym_variants, limit))
+                    main_rows = cur.fetchall()
+                    main_rows.reverse()
+                    if main_rows:
+                        start_time = main_rows[0]['timestamp']
 
-                cur.execute(trade_query, tuple(trade_params))
-                trade_rows = cur.fetchall()
-                for row in trade_rows:
-                    trades.append(TradeData(
-                        id=str(row['id']),
-                        strategy_id=row['strategy'],
-                        side=row['side'],
-                        entry_time=row['entry_time'],
-                        entry_price=float(row['entry_price']) if row['entry_price'] else None,
-                        exit_time=row['exit_time'],
-                        exit_price=float(row['exit_price']) if row['exit_price'] else None,
-                        stop_loss=float(row['stop_loss']) if row['stop_loss'] else None,
-                        take_profit=float(row['take_profit']) if row['take_profit'] else None,
-                        volume=float(row['lot']) if row['lot'] else 0.0,
-                        status=row['status'] if row['status'] else "OPEN",
-                        profit_loss=float(row['pnl']) if row['pnl'] else None
-                    ))
+                all_rows = warmup_rows + main_rows
+                
+                # Extract closes
+                closes = [float(row['close']) for row in all_rows]
+                
+                # Compute EMA
+                if include_indicators:
+                    ema20_list = calculate_ema(closes, config.EMA20_PERIOD)
+                    ema50_list = calculate_ema(closes, config.EMA50_PERIOD)
+                else:
+                    ema20_list = [None] * len(all_rows)
+                    ema50_list = [None] * len(all_rows)
+                
+                candles = []
+                indicators = []
+                
+                # Filter the main rows
+                for i, row in enumerate(all_rows):
+                    if row['timestamp'] >= start_time:
+                        c = CandleData(
+                            timestamp=row['timestamp'],
+                            open=float(row['open']),
+                            high=float(row['high']),
+                            low=float(row['low']),
+                            close=float(row['close']),
+                            volume=0.0,
+                            is_complete=True
+                        )
+                        candles.append(c)
+                        
+                        if include_indicators:
+                            ind = IndicatorData(
+                                timestamp=row['timestamp'],
+                                ema20=ema20_list[i],
+                                ema50=ema50_list[i]
+                            )
+                            indicators.append(ind)
+                            
+                # 2. Fetch Signals
+                signals = []
+                if include_signals:
+                    sig_query = "SELECT * FROM signals WHERE signal_time >= %s AND signal_time <= %s"
+                    sig_params: List[Any] = [start_time, end_time]
+                    if strategy_list:
+                        sig_query += " AND strategy = ANY(%s)"
+                        sig_params.append(strategy_list)
+                    sig_query += " ORDER BY signal_time ASC LIMIT %s"
+                    sig_params.append(limit)
+                    
+                    cur.execute(sig_query, tuple(sig_params))
+                    sig_rows = cur.fetchall()
+                    for row in sig_rows:
+                        signals.append(SignalData(
+                            id=str(row['id']),
+                            strategy_id=row['strategy'],
+                            type=row['direction'],
+                            timestamp=row['signal_time'],
+                            price=float(row['entry_price']) if row['entry_price'] else None,
+                            status="TRIGGERED"
+                        ))
+                        
+                # 3. Fetch Trades
+                trades = []
+                if include_trades:
+                    trade_query = "SELECT * FROM trades WHERE entry_time <= %s AND (exit_time IS NULL OR exit_time >= %s)"
+                    trade_params: List[Any] = [end_time, start_time]
+                    if strategy_list:
+                        trade_query += " AND strategy = ANY(%s)"
+                        trade_params.append(strategy_list)
+                    if side:
+                        trade_query += " AND side = %s"
+                        trade_params.append(side.upper())
+                    if trade_status:
+                        trade_query += " AND status = %s"
+                        trade_params.append(trade_status.upper())
+                    trade_query += " ORDER BY entry_time ASC LIMIT %s"
+                    trade_params.append(limit)
+
+                    cur.execute(trade_query, tuple(trade_params))
+                    trade_rows = cur.fetchall()
+                    for row in trade_rows:
+                        trades.append(TradeData(
+                            id=str(row['id']),
+                            strategy_id=row['strategy'],
+                            side=row['side'],
+                            entry_time=row['entry_time'],
+                            entry_price=float(row['entry_price']) if row['entry_price'] else None,
+                            exit_time=row['exit_time'],
+                            exit_price=float(row['exit_price']) if row['exit_price'] else None,
+                            stop_loss=float(row['stop_loss']) if row['stop_loss'] else None,
+                            take_profit=float(row['take_profit']) if row['take_profit'] else None,
+                            volume=float(row['lot']) if row['lot'] else 0.0,
+                            status=row['status'] if row['status'] else "OPEN",
+                            profit_loss=float(row['pnl']) if row['pnl'] else None
+                        ))
+    except Exception as e:
+        logger.error(f"Error querying database in get_chart_data: {e}. Returning REST fallback.")
+        return _get_chart_data_rest_fallback(
+            symbol=symbol,
+            timeframe=timeframe,
+            start_time=start_time,
+            end_time=end_time,
+            include_indicators=include_indicators,
+            limit=limit
+        )
 
     inst = InstrumentInfo(
         id=symbol,
