@@ -46,8 +46,33 @@ def get_live_health_snapshot():
                     td_status = "connected"
                     market_data = "fresh"
     except Exception as e:
-        logger.warning(f"Health DB probe error: {e}")
-        db_status = "disconnected"
+        logger.warning(f"Health direct DB probe error: {e}")
+        try:
+            if config.SUPABASE_DB_URL and config.SUPABASE_DB_KEY:
+                from supabase import create_client
+                client = create_client(config.SUPABASE_DB_URL, config.SUPABASE_DB_KEY)
+                res = client.table("candles").select("timestamp").order("timestamp", desc=True).limit(1).execute()
+                db_status = "connected"
+                if res.data and len(res.data) > 0:
+                    ts_str = res.data[0].get("timestamp")
+                    if ts_str:
+                        last_ts = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
+                        last_tick_seconds_ago = max(0, int((now - last_ts).total_seconds()))
+                        max_stale = getattr(config, 'MAX_TICK_STALENESS_SECONDS', 120)
+                        if last_tick_seconds_ago <= max_stale:
+                            market_data = "fresh"
+                            td_status = "connected"
+                        else:
+                            market_data = "stale"
+                            td_status = "stale"
+                else:
+                    td_status = "connected"
+                    market_data = "fresh"
+            else:
+                db_status = "disconnected"
+        except Exception as rest_e:
+            logger.warning(f"Health REST DB probe error: {rest_e}")
+            db_status = "disconnected"
 
     is_healthy = (db_status == "connected")
     
