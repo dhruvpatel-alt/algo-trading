@@ -520,16 +520,19 @@ CREATE OR REPLACE FUNCTION notify_chart_event()
 RETURNS TRIGGER AS $$
 DECLARE
     event_type TEXT;
+    event_ts TIMESTAMPTZ;
     payload JSON;
 BEGIN
     IF TG_TABLE_NAME = 'ticks' THEN
         event_type := 'tick';
+        event_ts := NEW.timestamp;
         payload := json_build_object(
             'instrument', NEW.symbol,
             'price', NEW.price
         );
     ELSIF TG_TABLE_NAME = 'candles' THEN
         event_type := 'candle_update';
+        event_ts := NEW.timestamp;
         payload := json_build_object(
             'instrument', NEW.symbol,
             'open', NEW.open,
@@ -539,14 +542,18 @@ BEGIN
         );
     ELSIF TG_TABLE_NAME = 'signals' THEN
         event_type := 'signal';
+        event_ts := COALESCE(NEW.signal_time, CURRENT_TIMESTAMP);
         payload := json_build_object(
+            'id', NEW.id,
             'strategy_id', NEW.strategy,
             'type', NEW.direction,
             'price', NEW.entry_price
         );
     ELSIF TG_TABLE_NAME = 'trades' THEN
         event_type := 'trade';
+        event_ts := COALESCE(NEW.entry_time, CURRENT_TIMESTAMP);
         payload := json_build_object(
+            'id', NEW.id,
             'strategy_id', NEW.strategy,
             'side', NEW.side,
             'status', NEW.status,
@@ -557,9 +564,7 @@ BEGIN
     -- Publish event
     PERFORM pg_notify('chart_events', json_build_object(
         'event', event_type,
-        'timestamp', CASE WHEN TG_TABLE_NAME = 'candles' THEN NEW.timestamp
-                          WHEN TG_TABLE_NAME = 'ticks' THEN NEW.timestamp
-                          ELSE CURRENT_TIMESTAMP END,
+        'timestamp', event_ts,
         'data', payload
     )::text);
 
