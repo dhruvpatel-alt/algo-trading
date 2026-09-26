@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import json
 import logging
-import ssl
 import threading
 import time
 from datetime import datetime, timezone
@@ -118,7 +117,6 @@ class TwelveDataWebSocketClient:
             kwargs={
                 "ping_interval": 15,
                 "ping_timeout": 10,
-                "sslopt": {"cert_reqs": ssl.CERT_NONE},
             },
             daemon=True,
         )
